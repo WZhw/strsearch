@@ -1,0 +1,18 @@
+# depslib dependency file v1.0
+1506648292 source:d:\coding\strsearch\strsearch.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	"strsearch.h"
+
+1506430095 d:\coding\strsearch\strsearch.h
+
+1506502878 source:d:\coding\strsearch\main.c
+	"strsearch.c"
+
+1506430161 d:\coding\strsearch\strsearch.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	"strsearch.h"
+
