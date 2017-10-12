@@ -1,20 +1,102 @@
-/*
- * strsearch.c
- *
- * Implementation of the Aho-Corasick algorithm.
- *
- * NOTES:
- *    8/94  -  Original Implementation  (Sean Davis)
- *    9/94  -  Redid Implementation  (James Knight)
- *    3/96  -  Modularized the code  (James Knight)
- *    7/96  -  Finished the modularization  (James Knight)
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "strsearch.h"
 
+FILE *pattern_file, *string_file, *result_file;
+
+Pa Patterns[MAXPaN];
+char read_pattern_buff[MAXPa];
+char read_obj_buff[MAXObj];
+
+int main(int argc, char* argv[]){
+    clock_t start, finish;
+    double  duration;
+    start = clock();
+
+    if(argc != 4){
+        printf("Arguments don't agree.\n");
+        return -1;
+    }
+
+    pattern_file = fopen(argv[1], "r");
+    if(pattern_file == NULL){
+        printf(argv[1]);
+        return -1;
+    }
+    printf("Pattern file read successful.\n");
+
+    AC_STRUCT *ac_tree = ac_alloc();
+    if(ac_tree == NULL){
+        printf("AC_TREE allocate unsuccessful.\n");
+        return -1;
+    }
+    printf("AC_TREE allocate successful.\n");
+
+    //ac_construct_by_file(ac_tree, pattern_file);
+    int id = 1, posi = 0, patternLength;
+    while(!feof(pattern_file)){
+        memset(read_pattern_buff, 0, MAXPa * sizeof(char));
+        fgets(read_pattern_buff, MAXPa, pattern_file);
+        patternLength = strlen(read_pattern_buff) - 1;
+        Pa p = malloc(sizeof(Pattern));
+        for(posi = 0; posi < patternLength; posi++){
+            p->P[posi] = read_pattern_buff[posi];
+        }
+        p->P[patternLength] = '\0';
+        p->length = patternLength;
+        Patterns[id] = p;
+
+        ac_add_string(ac_tree, read_pattern_buff, patternLength, id);
+        id++;
+    }
+    ac_prep(ac_tree);
+    printf("Construct ac successful.\n");
+
+
+
+    string_file = fopen(argv[2], "r");
+    if(string_file == NULL){
+        printf(argv[2]);
+        return -1;
+    }
+    printf("String file read successful.\n");
+
+    result_file = fopen(argv[3], "w");
+    if(result_file == NULL){
+        printf(argv[3]);
+    }
+    printf("Result file create successful.\n");
+
+    //ac_search_by_file(ac_tree, result_file, string_file);
+    while(!feof(string_file)){
+        memset(read_obj_buff, 0, MAXObj * sizeof(char));
+        fgets(read_obj_buff, MAXObj, string_file);
+        ac_search_init(ac_tree, read_obj_buff, strlen(read_obj_buff));
+        ac_search(ac_tree);
+    }
+
+    ac_free(ac_tree);
+
+    if(fclose(result_file) != 0){
+        printf("fclose error in result file.\n");
+    }
+
+    if(fclose(string_file) != 0){
+        printf("fclose error in string file.\n");
+    }
+
+    if(fclose(pattern_file) != 0){
+        printf("fclose error in pattern file.\n");
+    }
+
+    finish = clock();
+    duration = (double)(finish - start) / CLOCKS_PER_SEC;
+    printf( "Processed in %f seconds\n", duration );
+
+    return 0;
+}
 
 
 /*
@@ -26,21 +108,23 @@
  *
  * Returns:  A dynamically allocated AC_STRUCT structure.
  */
-AC_STRUCT *ac_alloc(void)
-{
-  AC_STRUCT *node;
+AC_STRUCT *ac_alloc(void){
+    AC_STRUCT *node;
 
-  if ((node = malloc(sizeof(AC_STRUCT))) == NULL)
-    return NULL;
-  memset(node, 0, sizeof(AC_STRUCT));
+    if ((node = malloc(sizeof(AC_STRUCT))) == NULL){
+        return NULL;
+    }
 
-  if ((node->tree = malloc(sizeof(ACTREE_NODE))) == NULL) {
-    free(node);
-    return NULL;
-  }
-  memset(node->tree, 0, sizeof(ACTREE_NODE));
+    memset(node, 0, sizeof(AC_STRUCT));
 
-  return node;
+    if ((node->root = malloc(sizeof(ACTREE_NODE))) == NULL) {
+        free(node);
+        return NULL;
+    }
+
+    memset(node->root, 0, sizeof(ACTREE_NODE));
+
+    return node;
 }
 
 
@@ -63,230 +147,94 @@ AC_STRUCT *ac_alloc(void)
  *
  * Returns:  non-zero on success, zero on error.
  */
-int ac_add_string(AC_STRUCT *node, char *P, int M, int id)
-{
-  int i, j, newsize;
-  AC_TREE tnode, child, back, newnode, list, tail;
+int ac_add_string(AC_STRUCT *node, char *P, int M, int id){
+    int i = 0, flag = 0;
+    AC_TREE preNode, currentNode, newNode;
 
-  /*
-   * Return a zero if a previous error had occurred, or if the
-   * given id equals zero.  An id value of zero is used by the
-   * algorithm to signal that no pattern ends at a node in the
-   * keyword tree.  So, it can't be used as a pattern's id.
-   */
-  if (node->errorflag || id == 0)
-    return 0;
-
-  P--;            /* Shift to make sequence be P[1],...,P[M] */
-
-  /*
-   * Allocate space for the new string's information.
-   */
-  if (node->Psize <= id) {
-    if (node->Psize == 0) {
-      newsize = (id >= 16 ? id + 1 : 16);
-      node->Plengths = malloc(newsize * sizeof(int));
-    }
-    else {
-      newsize = node->Psize + id + 1;
-      node->Plengths = realloc(node->Plengths, newsize * sizeof(int));
-    }
-    if (node->Plengths == NULL) {
-      node->errorflag = 1;
-      return 0;
+    if (id == 0 || id <= node->patternNum){
+        return 0;
     }
 
-    for (i=node->Psize; i < newsize; i++)
-      node->Plengths[i] = 0;
-    node->Psize = newsize;
-  }
-
-  if (node->Plengths[id] != 0) {
-    fprintf(stderr, "Error in Aho-Corasick preprocessing.  "
-            "Duplicate identifiers\n");
-    return 0;
-  }
-
-  /*
-   * Add the string to the keyword tree.
-   */
-  tnode = node->tree;
-  for (i=1; i <= M; i++) {
-    /*
-     * Find the child whose character is P[i].
-     */
-    back = NULL;
-    child = tnode->children;
-    while (child != NULL && child->ch < P[i]) {
-      back = child;
-      child = child->sibling;
+    if(node->patternNum == 0){
+        currentNode = node->root;
+        for(; i < M; i++){
+            if((newNode = malloc(sizeof(ACTREE_NODE))) == NULL){
+                return -1;
+            }
+            memset(newNode, 0, sizeof(ACTREE_NODE));
+            newNode->data = P[i];
+            if(i == M-1){
+                newNode->stateId = id;
+            }
+            else{
+                newNode->stateId = 0;
+            }
+            currentNode->children = newNode;
+            currentNode = currentNode->children;
+        }
+        node->patternNum++;
+        return 1;
     }
 
-    if (child == NULL || child->ch != P[i])
-      break;
-
-    tnode = child;
-
-#ifdef STATS
-    node->prep_old_edges++;
-#endif
-  }
-
-  /*
-   * If only part of the pattern exists in the tree, add the
-   * rest of the pattern to the tree.
-   */
-  if (i <= M) {
-    list = tail = NULL;
-    for (j=i; j <= M; j++) {
-      if ((newnode = malloc(sizeof(ACTREE_NODE))) == NULL)
-        break;
-      memset(newnode, 0, sizeof(ACTREE_NODE));
-      newnode->ch = P[j];
-
-      if (list == NULL)
-        list = tail = newnode;
-      else
-        tail = tail->children = newnode;
-
-#ifdef STATS
-      node->prep_new_edges++;
-#endif
-    }
-    if (j <= M) {
-      while (list != NULL) {
-        tail = list->children;
-        free(list);
-        list = tail;
-      }
-      return 0;
+    currentNode = preNode = node->root->children;
+    while(currentNode != NULL && i < M){
+        preNode = currentNode;
+        if(P[i] == currentNode->data){
+            i++;
+            currentNode = currentNode->children;
+            flag = 0;
+        }
+        else{
+            currentNode = currentNode->sibling;
+            flag = 1;
+        }
     }
 
-    list->sibling = child;
-    if (back == NULL)
-      tnode->children = list;
-    else
-      back->sibling = list;
+    if(i == M){
+        return 0;
+    }
 
-    tnode = tail;
-  }
+    if((newNode = malloc(sizeof(ACTREE_NODE))) == NULL){
+        return -1;
+    }
+    memset(newNode, 0, sizeof(ACTREE_NODE));
+    newNode->data = P[i];
+    if(i == M-1){
+        newNode->stateId = id;
+    }
+    else{
+        newNode->stateId = 0;
+    }
 
-  tnode->matchid = id;
-  node->Plengths[id] = M;
-  node->ispreprocessed = 0;
+    currentNode = preNode;
+    if(flag == 0){
+        currentNode->children = newNode;
+        currentNode = currentNode->children;
+    }
+    else{
+        currentNode->sibling = newNode;
+        currentNode = currentNode->sibling;
+    }
+    i++;
 
-  return 1;
+    for(; i < M; i++){
+        if((newNode = malloc(sizeof(ACTREE_NODE))) == NULL){
+            return -1;
+        }
+        memset(newNode, 0, sizeof(ACTREE_NODE));
+        newNode->data = P[i];
+        if(i == M-1){
+            newNode->stateId = id;
+        }
+        else{
+            newNode->stateId = 0;
+        }
+        currentNode->children = newNode;
+        currentNode = currentNode->children;
+    }
+    node->patternNum++;
+    return 1;
 }
-
-
-/*
- * ac_del_string
- *
- * Deletes a string from the keyword tree.
- *
- * Parameters:   node  -  an AC_STRUCT structure
- *               P     -  the sequence to be deleted
- *               M     -  its length
- *               id    -  its identifier
- *
- * Returns:  non-zero on success, zero on error.
- */
-int ac_del_string(AC_STRUCT *node, char *P, int M, int id)
-{
-  int i, flag;
-  AC_TREE tnode, tlast, tback, child, back;
-
-  if (node->errorflag || id > node->Psize || node->Plengths[id] == 0)
-    return 0;
-
-  P--;            /* Shift to make sequence be P[1],...,P[M] */
-
-  /*
-   * Scan the tree for the path corresponding to the keyword to be deleted.
-   */
-  flag = 1;
-  tlast = tnode = node->tree;
-  tback = NULL;
-
-  for (i=1; i <= M; i++) {
-    /*
-     * Find the child matching P[i].  It must be there.
-     */
-    child = tnode->children;
-    back = NULL;
-    while (child != NULL && child->ch != P[i]) {
-      back = child;
-      child = child->sibling;
-    }
-
-    if (child == NULL) {
-      fprintf(stderr, "Error in Aho-Corasick preprocessing.  String to be "
-              "deleted is not in tree.\n");
-      return 0;
-    }
-
-    /*
-     * Try to find the point where the pattern to be deleted branches off
-     * from the paths of the other patterns in the tree.  This point must
-     * be at the latest node which satisfies one of these two conditions:
-     *
-     *    1) Another pattern ends at that node (and so
-     *       `child->matchid != 0').  In this case, the branch point is
-     *       just below this node and so the children of this node
-     *       should be removed.
-     *    2) A node has other siblings.  In this case, the node itself
-     *       is the branch point, and it and its children should be
-     *       removed.
-     */
-    if (i < M && child->matchid != 0) {
-      flag = 1;
-      tlast = child;
-    }
-    else if (back != NULL || child->sibling != NULL) {
-      flag = 2;
-      tlast = child;
-      tback = (back == NULL ? tnode : back);
-    }
-
-    tnode = child;
-  }
-
-  /*
-   * If the node corresponding to the end of the keyword has children,
-   * then the tree should not be altered, except to remove the keyword's
-   * identifier from the tree.
-   *
-   * Otherwise, apply the appropriate removal, as described above.
-   */
-  if (tnode->children != NULL) {
-    tnode->matchid = 0;
-  }
-  else {
-    if (flag == 1) {
-      child = tlast->children;
-      tlast->children = NULL;
-      tlast = child;
-    }
-    else {
-      if (tback->children == tlast)
-        tback->children = tlast->sibling;
-      else
-        tback->sibling = tlast->sibling;
-    }
-
-    while (tlast != NULL) {
-      child = tlast->children;
-      free(tlast);
-      tlast = child;
-    }
-  }
-
-  node->Plengths[id] = 0;
-  node->ispreprocessed = 0;
-
-  return 1;
-}
-
 
 /*
  * ac_prep
@@ -297,103 +245,100 @@ int ac_del_string(AC_STRUCT *node, char *P, int M, int id)
  *
  * Returns: non-zero on success, zero on error.
  */
-int ac_prep(AC_STRUCT *node)
-{
-  char x;
-  AC_TREE v, vprime, w, wprime, root, front, back, child;
+int ac_prep(AC_STRUCT *node){
+    printf("Add pattern strings successful.\n");
+    AC_TREE root, currentNode, preNode, stateNode, faillinkNode;
+    root = node->root;
+    int flag;
+    Queue *travQueue, *siblingQueue, *faillinkQueue;
+    travQueue = queue_init();
+    siblingQueue = queue_init();
+    faillinkQueue = queue_init();
+    if(root->children != NULL){
+        currentNode = root->children;
+        if(!enQueue(siblingQueue, currentNode)){
+            return 0;
+        }
+        while(!isEmpty(siblingQueue)){
+            currentNode = deQueue(siblingQueue);
+            currentNode->faillink = root;
+            enQueue(travQueue, currentNode);
+            if(currentNode->sibling != NULL){
+                enQueue(siblingQueue, currentNode->sibling);
+            }
+        }
 
-  if (node->errorflag)
-    return 0;
+        while(!isEmpty(travQueue)){
+            preNode = deQueue(travQueue);
+            if(preNode->children != NULL){
+                enQueue(siblingQueue, preNode->children);
+                while(!isEmpty(siblingQueue)){
+                    currentNode = deQueue(siblingQueue);
+                    if(currentNode->sibling != NULL){
+                        enQueue(siblingQueue, currentNode->sibling);
+                    }
+                    enQueue(travQueue, currentNode);
 
-  /*
-   * The failure link and output link computation requires a breadth-first
-   * traversal of the keyword tree.  And, to do that, we need a queue of
-   * the nodes yet to be processed.
-   *
-   * The `faillink' fields will be used as the pointers for the queue
-   * of nodes to be computed (since the failure link is only set after
-   * the node is removed from the queue).
-   *
-   * The `outlink' fields will be used as the pointers to a node's parent
-   * for nodes in the queue (since the output link is also only set after
-   * the node is removed from the queue).
-   */
-  root = node->tree;
-
-  front = back = root;
-  front->faillink = NULL;
-  front->outlink = NULL;
-
-  while (front != NULL) {
-    v = front;
-    x = v->ch;
-    vprime = v->outlink;
-
-    /*
-     * Add the node's children to the queue.
-     */
-    for (child=v->children; child != NULL; child=child->sibling) {
-      child->outlink = v;
-      back->faillink = child;
-      back = child;
+                    flag = 1;
+                    stateNode = preNode;
+                    while(flag){
+                        stateNode = stateNode->faillink;
+                        if(stateNode->children != NULL){
+                            enQueue(faillinkQueue, stateNode->children);
+                            while(!isEmpty(faillinkQueue)){
+                                faillinkNode = deQueue(faillinkQueue);
+                                if(faillinkNode->sibling != NULL){
+                                    enQueue(faillinkQueue, faillinkNode->sibling);
+                                }
+                                if(faillinkNode->data == currentNode->data){
+                                    currentNode->faillink = faillinkNode;
+                                    if(faillinkNode->stateId != 0){
+                                        currentNode->outlink = faillinkNode;
+                                    }
+                                    flag = 0;
+                                }
+                            }
+                        }
+                        if(stateNode==root && flag ==1){
+                            currentNode->faillink = root;
+                            break;
+                        }
+                    }//while(flag)
+                }//while(!empty(siblingQueue))
+            }//if(preNode->children != NULL)
+        }//while(!empty(travQueue))
     }
-    back->faillink = NULL;
-
-    front = front->faillink;
-    v->faillink = v->outlink = NULL;
-
-    /*
-     * Set the failure and output links.
-     */
-    if (v == root)
-      ;
-    else if (vprime == root)
-      v->faillink = root;
-    else {
-      /*
-       * Find the find link in the failure link chain which has a child
-       * labeled with x.
-       */
-      wprime = NULL;
-      w = vprime->faillink;
-
-      while (1) {
-        wprime = w->children;
-        while (wprime != NULL && wprime->ch < x)
-          wprime = wprime->sibling;
-
-        if ((wprime != NULL && wprime->ch == x) || w == root)
-          break;
-
-        w = w->faillink;
-
-#ifdef STATS
-        node->prep_fail_compares++;
-#endif
-      }
-#ifdef STATS
-      node->prep_fail_compares++;
-#endif
-
-      if (wprime != NULL && wprime->ch == x)
-        v->faillink = wprime;
-      else
-        v->faillink = root;
-
-      if (v->matchid != 0) {
-        if (v->faillink->matchid != 0)
-          v->outlink = v->faillink;
-        else
-          v->outlink = v->faillink->outlink;
-      }
-    }
-  }
-
-  node->ispreprocessed = 1;
-  node->initflag = 0;
-
-  return 1;
+    return 1;
 }
+
+/** ac_construct_by_file
+ *
+ * \param
+ * \param
+ * \return
+ *
+ */
+inline void ac_construct_by_file(AC_STRUCT *node, FILE *pattern){
+    int id = 1, posi = 0, patternLength;
+    while(!feof(pattern)){
+        memset(read_pattern_buff, 0, MAXPa * sizeof(char));
+        fgets(read_pattern_buff, MAXPa, pattern);
+        patternLength = strlen(read_pattern_buff) - 1;
+        Pa p = malloc(sizeof(Pattern));
+        for(posi = 0; posi < patternLength; posi++){
+            p->P[posi] = read_pattern_buff[posi];
+        }
+        p->P[patternLength] = '\0';
+        p->length = patternLength;
+        Patterns[id] = p;
+
+        ac_add_string(node, read_pattern_buff, patternLength, id);
+        id++;
+    }
+    ac_prep(node);
+    printf("Construct ac successful.\n");
+}
+
 
 
 /*
@@ -408,176 +353,93 @@ int ac_prep(AC_STRUCT *node)
  *
  * Returns:  nothing.
  */
-void ac_search_init(AC_STRUCT *node, char *T, int N)
-{
-  if (node->errorflag)
-    return;
-  else if (!node->ispreprocessed) {
-    fprintf(stderr, "Error in Aho-Corasick search.  The preprocessing "
-            "has not been completed.\n");
-    return;
-  }
-
-  node->T = T - 1;          /* Shift to make sequence be T[1],...,T[N] */
-  node->N = N;
-  node->c = 1;
-  node->w = node->tree;
-  node->output = NULL;
-  node->initflag = 1;
-  node->endflag = 0;
+void ac_search_init(AC_STRUCT *node, char *objString, long long int objStringLength){
+    node->topOfLine = node->topOfLine + node->objStringLength;
+    node->objStringLength = objStringLength;
+    node->objString = objString;
+    node->posInLine = 0;
 }
 
 
 /*
  * ac_search
- *
- * Scans a text to look for the next occurrence of one of the patterns
- * in the text.  An example of how this search should be used is the
- * following:
- *
- *    s = T;
- *    len = N;
- *    contflag = 0;
- *    ac_search_init(node, T, N);
- *    while ((s = ac_search(node, &matchlen, &matchid) != NULL) {
- *      >>> Pattern `matchid' matched from `s' to `s + matchlen - 1'. <<<
- *    }
- *
- * where `node', `T' and `N' are assumed to be initialized appropriately.
- *
  * Parameters:  node           -  a preprocessed AC_STRUCT structure
  *              length_out     -  where to store the new match's length
  *              id_out         -  where to store the identifier of the
  *                                pattern that matched
  *
  * Returns:  the left end of the text that matches a pattern, or NULL
- *           if no match occurs.  (It also stores values in `*length_out',
- *           and `*id_out' giving the match's length and pattern identifier.
  */
-char *ac_search(AC_STRUCT *node, int *length_out, int *id_out)
-{
-  int c, N, id;
-  char *T;
-  AC_TREE w, wprime, root;
-
-  if (node->errorflag)
-    return NULL;
-  else if (!node->ispreprocessed) {
-    fprintf(stderr, "Error in Aho-Corasick search.  The preprocessing "
-            "has not been completed.\n");
-    return NULL;
-  }
-  else if (!node->initflag) {
-    fprintf(stderr, "Error in Aho-Corasick search.  ac_search_init was not "
-            "called.\n");
-    return NULL;
-  }
-  else if (node->endflag)
-    return NULL;
-
-  T = node->T;
-  N = node->N;
-  c = node->c;
-  w = node->w;
-  root = node->tree;
-
-  /*
-   * If the last call to ac_search returned a match, check for another
-   * match ending at the same right endpoint (denoted by a non-NULL
-   * output link).
-   */
-  if (node->output != NULL) {
-    node->output = node->output->outlink;
-#ifdef STATS
-    node->outlinks_traversed++;
-#endif
-
-    if (node->output != NULL) {
-      id = node->output->matchid;
-      if (id_out)
-        *id_out = id;
-      if (length_out)
-        *length_out = node->Plengths[id];
-
-      return &T[c] - node->Plengths[id];
+void ac_search(AC_STRUCT *node){
+    long long int pos;
+    char *objString = node->objString;
+    AC_TREE currentStateNode, childNode;
+    if(node->topOfLine == 0){
+        node->currentState = node->root;
     }
-  }
-
-  /*
-   * Run the search algorithm, stopping at the first position where a
-   * match to one of the patterns occurs.
-   */
-  while (c <= N) {
-    /*
-     * Try to match the next input character to a child in the tree.
-     */
-    wprime = w->children;
-    while (wprime != NULL && wprime->ch != T[c])
-      wprime = wprime->sibling;
-
-#ifdef STATS
-    node->num_compares++;
-#endif
-
-    /*
-     * If the match fails, then either use the failure link (if not
-     * at the root), or move to the next character since no prefix
-     * of any pattern ends with character T[c].
-     */
-    if (wprime == NULL) {
-      if (w == root)
-        c++;
-      else {
-        w = w->faillink;
-
-#ifdef STATS
-        node->num_failures++;
-#endif
-      }
+    currentStateNode = node->currentState;
+    for(pos = 0; pos < node->objStringLength; pos++){
+        childNode = currentStateNode->children;
+        while(currentStateNode != node->root || childNode != NULL){
+            if(childNode == NULL){
+                currentStateNode = currentStateNode->faillink;
+                childNode = currentStateNode->children;
+                continue;
+            }
+            if(childNode->data == objString[pos]){
+                currentStateNode = childNode;
+                node->currentState = childNode;
+                node->posInLine = pos + 1;
+                if(childNode->stateId != 0){
+                    output(node);
+                }
+                break;
+            }
+            else{
+                childNode = childNode->sibling;
+            }
+        }
     }
-    else {
-      /*
-       * If we could match the input, move down the tree and to the
-       * next input character, and see if that match completes the
-       * match to a pattern (when matchid != 0 or outlink != NULL).
-       */
-      c++;
-      w = wprime;
-
-#ifdef STATS
-      node->edges_traversed++;
-#endif
-
-      if (w->matchid != 0)
-        node->output = w;
-      else if (w->outlink != NULL) {
-        node->output = w->outlink;
-
-#ifdef STATS
-        node->outlinks_traversed++;
-#endif
-      }
-
-      if (node->output != NULL) {
-        id = node->output->matchid;
-        if (id_out)
-          *id_out = id;
-        if (length_out)
-          *length_out = node->Plengths[id];
-
-        node->w = w;
-        node->c = c;
-
-        return &T[c] - node->Plengths[id];
-      }
-    }
-  }
-
-  node->c = c;
-  node->endflag = 1;
-
-  return NULL;
 }
+
+/** ac_search_by_file
+ *
+ * \param
+ * \param
+ * \return
+ *
+*/
+
+inline void ac_search_by_file(AC_STRUCT *node, FILE *obj_string, FILE *result){
+    while(!feof(obj_string)){
+        memset(read_obj_buff, 0, MAXObj * sizeof(char));
+        fgets(read_obj_buff, MAXObj, obj_string);
+        ac_search_init(node, read_obj_buff, strlen(read_obj_buff));
+        ac_search(node);
+    }
+}
+
+
+/** output
+ *
+ * \param
+ * \param
+ * \return
+ *
+*/
+void output(AC_STRUCT *node){
+    AC_TREE currentNode;
+    currentNode = node->currentState;
+    while(currentNode != NULL){
+        fprintf(result_file, "%s  %I64d\n", \
+                Patterns[currentNode->stateId]->P, \
+                node->topOfLine + node->posInLine - Patterns[currentNode->stateId]->length
+                );
+        currentNode = currentNode->outlink;
+    }
+}
+
+
 
 
 /*
@@ -589,64 +451,28 @@ char *ac_search(AC_STRUCT *node, int *length_out, int *id_out)
  *
  * Returns:  nothing.
  */
-void ac_free(AC_STRUCT *node)
-{
-  AC_TREE front, back, next;
-
-  if (node == NULL)
-    return;
-
-  if (node->tree != NULL) {
-    front = back = node->tree;
-    while (front != NULL) {
-      back->sibling = front->children;
-      while (back->sibling != NULL)
-        back = back->sibling;
-
-      next = front->sibling;
-      free(front);
-      front = next;
+void ac_free(AC_STRUCT *node){
+    AC_TREE front, back, next;
+    if (node == NULL){return;}
+    if (node->root != NULL) {
+        front = back = node->root;
+        while (front != NULL) {
+            back->sibling = front->children;
+            while (back->sibling != NULL){
+                back = back->sibling;
+            }
+            next = front->sibling;
+            free(front);
+            front = next;
+        }
     }
-  }
-
-  if (node->Plengths != NULL)
-    free(node->Plengths);
-
-  free(node);
-}
-
-int main(int argc, char* argv[]){
-    int exit_status = EXIT_SUCCESS;
-    FILE *pattern_file, *string_file, *result_file;
-
-    if(argc != 3){
-        perror("Arguments don't agree.");
-        exit_status = EXIT_FAILURE;
+    if (node->currentState != NULL){
+        free(node->currentState);
     }
-
-    pattern_file = fopen(argv[0], "r");
-        if(pattern_file = NULL){
-        perror(argv[0]);
-        exit_status = EXIT_FAILURE;
+    if  (node->objString != NULL){
+        free(node->objString);
     }
-
-    string_file = fopen(argv[1], "r");
-    if(string_file = NULL){
-        perror(argv[1]);
-        exit_status = EXIT_FAILURE;
-    }
-
-    if(fclose(string_file) != 0){
-        perror("fclose");
-        exit(EXIT_FAILURE);
-    }
-
-    if(fclose(pattern_file) != 0){
-        perror("fclose");
-        exit(EXIT_FAILURE);
-    }
-
-    return exit_status;
+    free(node);
 }
 
 
